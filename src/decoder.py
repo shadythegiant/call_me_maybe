@@ -5,7 +5,9 @@ from typing import List
 from .vocab import TokenVocab
 from .schemas import FunctionDefinition
 
-# Pre-compiled regexes for maximum speed
+# PRE-COMPILE REGEXES ONCE FOR SPEED
+# Translates the regex strings into a C-level state machine once,
+# preventing massive overhead during the token evaluation loop.
 RE_NUMBER = re.compile(r'^-?(?:0|[1-9]\d*)?(?:\.\d*)?')
 RE_STRING = re.compile(r'^"([^"\\]|\\.)*("?)')
 
@@ -20,89 +22,93 @@ class ConstraintEngine:
     ) -> list[tuple[str, str]]:
         """Breaks the exact required JSON structure into an ordered sequence."""
         seq = []
+
+        # 1. The mandatory JSON start
         seq.append(
             ("literal", f'{{"prompt": "{original_prompt}", "name": "{func.name}", "parameters": {{'))
 
+        # 2. The parameters in order based on the function schema
         params = list(func.parameters.items())
         for i, (p_name, p_schema) in enumerate(params):
             if i > 0:
                 seq.append(("literal", f', "{p_name}": '))
             else:
                 seq.append(("literal", f'"{p_name}": '))
+
             seq.append((p_schema.type, ""))
 
+        # 3. The closure
         seq.append(("literal", "}}"))
         return seq
 
-    def _is_valid_prefix(self, text: str, template: list[tuple[str, str]]) -> bool:
-        """Evaluates if 'text' is a valid partial generation of the template."""
+    def _get_cursor_state(self, text: str, template: list[tuple[str, str]]):
+        """Returns the exact state (block_index, char_index) of the generated text."""
         text_idx = 0
 
-        for block_type, literal_val in template:
+        for i, (block_type, literal_val) in enumerate(template):
+            # If we've successfully verified all text, return the current block state
             if text_idx >= len(text):
-                return True
+                return (i, 0)
 
             remaining_text = text[text_idx:]
 
             if block_type == "literal":
                 if literal_val.startswith(remaining_text):
-                    return True
+                    return (i, len(remaining_text))
                 elif remaining_text.startswith(literal_val):
                     text_idx += len(literal_val)
                 else:
-                    return False
+                    return None  # Branch dead: Mismatch
 
             elif block_type == "number":
                 match = RE_NUMBER.match(remaining_text)
                 num_str = match.group(0) if match else ""
 
                 if not num_str:
-                    return False
+                    return None  # Branch dead: Invalid character for a number
+
                 if num_str == remaining_text:
-                    return True
+                    return (i, len(num_str))
+
+                # Number finished, advance the cursor past it
                 text_idx += len(num_str)
 
             elif block_type == "string":
                 if not remaining_text.startswith('"'):
-                    return False
+                    return None
+
                 match = RE_STRING.match(remaining_text)
                 str_part = match.group(0) if match else ""
 
                 if str_part == remaining_text:
-                    return True
+                    return (i, len(str_part))
+
+                # If the string isn't closed, but there's more text, it's invalid
                 if not str_part.endswith('"') or len(str_part) == 1:
-                    return False
+                    return None
+
+                # String finished, advance the cursor past it
                 text_idx += len(str_part)
 
-        return text_idx >= len(text)
+        # If we successfully parsed the whole template and the text ran out
+        if text_idx >= len(text):
+            return (len(template), 0)
+
+        return None
 
     def mask_logits(
-        self, logits: List[float], current_generation: str, original_prompt: str
-    ) -> List[float]:
-        """Mask illegal tokens using fast-paths and template parsing."""
-
-        # SPEEDUP 1: Memory Pre-allocation
-        # Instead of copying the list and running 'if i not in vocab' 150k times,
-        # we instantly allocate an array of negative infinity.
-        masked_logits = [-math.inf] * len(logits)
-
-        base_prefix = f'{{"prompt": "{original_prompt}", "name": "'
-
-        # SPEEDUP 2: The Fast-Path
-        # If we are typing the base prompt (which is >50% of the tokens),
-        # skip all Regex templates and use ultra-fast C-level string checking.
-        if len(current_generation) < len(base_prefix):
-            expected = base_prefix[len(current_generation):]
-
-            for token_id, token_str in self.vocab.id_to_str.items():
-                if expected.startswith(token_str) or token_str.startswith(expected):
-                    # Restore the valid logit score
-                    masked_logits[token_id] = logits[token_id]
-            return masked_logits
-
-        # --- STANDARD PHASE: Schema & Parameter Enforcement ---
+        self, logits: List[float], current_generation: str, original_prompt: str,
+        single_token_test: tuple[int, str] | None = None
+    ) -> bool | List[float]:
+        """
+        Evaluates valid templates. 
+        If single_token_test is provided, returns a boolean indicating if that specific token is allowed.
+        Otherwise, returns a fully masked logit array for the entire vocabulary.
+        """
+        # --- 1. Identify Valid Templates ---
         valid_templates = []
         match = re.search(r'"name":\s*"([^"]+)"', current_generation)
+
         if match:
             chosen_name = match.group(1)
             for func in self.functions:
@@ -111,20 +117,81 @@ class ConstraintEngine:
                         self._get_expected_template(func, original_prompt))
                     break
         else:
+            # We are still generating the name; all templates are valid
             for func in self.functions:
                 valid_templates.append(
                     self._get_expected_template(func, original_prompt))
 
         if not valid_templates:
-            return masked_logits
+            return False if single_token_test else [-math.inf] * len(logits)
 
-        # The Heavy Loop (now only running for the final few parameter tokens)
-        for token_id, token_str in self.vocab.id_to_str.items():
+        # --- 2. FAST PATH: "Sort & Check" Optimization ---
+        # Used when __main__.py evaluates one token at a time starting from the highest logit
+        if single_token_test:
+            token_id, token_str = single_token_test
             tentative_generation = current_generation + token_str
 
             for template in valid_templates:
-                if self._is_valid_prefix(tentative_generation, template):
-                    masked_logits[token_id] = logits[token_id]
+                if self._get_cursor_state(tentative_generation, template) is not None:
+                    return True
+            return False
+
+        # --- 3. SLOW PATH: Full Vocabulary Masking (Fallback) ---
+        # Only used if the generation loop does not pass single_token_test
+        masked_logits = [-math.inf] * len(logits)
+        is_all_literal = True
+        expected_literals = set()
+
+        for template in valid_templates:
+            state = self._get_cursor_state(current_generation, template)
+            if state is None:
+                continue
+            block_idx, char_idx = state
+            if block_idx >= len(template):
+                continue
+
+            block_type, literal_val = template[block_idx]
+            if block_type == "literal":
+                expected_literals.add(literal_val[char_idx:])
+            else:
+                is_all_literal = False
+                break
+
+        # Pure Literal Bulk-Check
+        if is_all_literal and expected_literals:
+            fast_masked_logits = [-math.inf] * len(logits)
+            can_use_fast_path = True
+
+            for token_id, token_str in self.vocab.id_to_str.items():
+                is_valid = False
+                for exp in expected_literals:
+                    if exp.startswith(token_str):
+                        is_valid = True
+                        break
+                    elif token_str.startswith(exp) and len(token_str) > len(exp):
+                        can_use_fast_path = False
+                        break
+
+                if not can_use_fast_path:
                     break
+
+                if is_valid:
+                    fast_masked_logits[token_id] = logits[token_id]
+
+            if can_use_fast_path:
+                return fast_masked_logits
+
+        # Pure Value Parsing (Regex) Bulk-Check
+        for token_id, token_str in self.vocab.id_to_str.items():
+            tentative_generation = current_generation + token_str
+
+            is_valid = False
+            for template in valid_templates:
+                if self._get_cursor_state(tentative_generation, template) is not None:
+                    is_valid = True
+                    break
+
+            if is_valid:
+                masked_logits[token_id] = logits[token_id]
 
         return masked_logits

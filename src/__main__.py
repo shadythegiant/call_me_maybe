@@ -1,13 +1,19 @@
+from .decoder import ConstraintEngine
+from .vocab import TokenVocab
+from .schemas import FunctionDefinition, PromptItem, FunctionCallOutput
+from llm_sdk import Small_LLM_Model
 import argparse
 import json
 import sys
+import torch
 from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
-from llm_sdk import Small_LLM_Model
-from .schemas import FunctionDefinition, PromptItem, FunctionCallOutput
-from .vocab import TokenVocab
-from .decoder import ConstraintEngine
+# PYTORCH CPU THREAD OPTIMIZATION
+# Forces the model to use 4 physical cores, eliminating severe context-switching
+# overhead on multi-core CPUs. This alone drastically reduces inference time.
+torch.set_num_threads(4)
+torch.set_grad_enabled(False)
 
 
 def load_json_file(filepath: str, adapter: TypeAdapter) -> list:
@@ -51,13 +57,21 @@ def main() -> None:
         test_prompt = prompt_item.prompt
         escaped_prompt = json.dumps(test_prompt)[1:-1]
 
+        # 1. Build the semantic context
         full_prompt = "Select a function to answer the query.\n\nAvailable functions:\n"
         for f in functions:
             full_prompt += f"- {f.name}: {f.description}\n"
         full_prompt += f"\nQuery: {test_prompt}\n\nResult:\n"
 
         input_ids = llm.encode(full_prompt)[0].tolist()
-        generated_text = ""
+
+        # 2. PRE-FILL THE DETERMINISTIC PREFIX
+        # By providing this fixed start, we instantly skip asking the LLM to
+        # generate the first ~20 tokens, saving massive CPU cycles.
+        prefix = f'{{"prompt": "{escaped_prompt}", "name": "'
+        generated_text = prefix
+        input_ids += llm.encode(prefix)[0].tolist()
+
         max_tokens = 150
 
         print(f"[{idx + 1}/{len(prompts)}] Generating for: '{test_prompt}'",
@@ -65,11 +79,35 @@ def main() -> None:
 
         for step in range(max_tokens):
             logits = llm.get_logits_from_input_ids(input_ids)
-            masked_logits = engine.mask_logits(
-                logits, generated_text, escaped_prompt)
 
-            best_token_id = masked_logits.index(max(masked_logits))
-            best_token_str = vocab.id_to_str[best_token_id]
+            # --- THE GENIUS OPTIMIZATION: Sort & Check ---
+            # Instead of masking all 151,643 tokens, we test them one by one
+            # starting from the LLM's top choice.
+            indexed_logits = list(enumerate(logits))
+            indexed_logits.sort(key=lambda x: x[1], reverse=True)
+
+            best_token_id = None
+            best_token_str = ""
+
+            for token_id, logit_score in indexed_logits:
+                # Skip out-of-vocabulary fallback IDs
+                if token_id not in vocab.id_to_str:
+                    continue
+
+                token_str = vocab.id_to_str[token_id]
+
+                # Check if this single token survives the engine's mask
+                test_mask = engine.mask_logits(
+                    logits=[0.0] * len(logits),
+                    current_generation=generated_text,
+                    original_prompt=escaped_prompt,
+                    single_token_test=(token_id, token_str)
+                )
+
+                if test_mask:
+                    best_token_id = token_id
+                    best_token_str = token_str
+                    break  # Stop immediately! We found the best valid token.
 
             generated_text += best_token_str
             input_ids.append(best_token_id)
@@ -102,5 +140,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("Programm Interrupted by user")
+        print("\n\nExecution interrupted by user (Ctrl+C). Exiting gracefully...")
         sys.exit(130)

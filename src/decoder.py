@@ -139,49 +139,7 @@ class ConstraintEngine:
         # --- 3. SLOW PATH: Full Vocabulary Masking (Fallback) ---
         # Only used if the generation loop does not pass single_token_test
         masked_logits = [-math.inf] * len(logits)
-        is_all_literal = True
-        expected_literals = set()
 
-        for template in valid_templates:
-            state = self._get_cursor_state(current_generation, template)
-            if state is None:
-                continue
-            block_idx, char_idx = state
-            if block_idx >= len(template):
-                continue
-
-            block_type, literal_val = template[block_idx]
-            if block_type == "literal":
-                expected_literals.add(literal_val[char_idx:])
-            else:
-                is_all_literal = False
-                break
-
-        # Pure Literal Bulk-Check
-        if is_all_literal and expected_literals:
-            fast_masked_logits = [-math.inf] * len(logits)
-            can_use_fast_path = True
-
-            for token_id, token_str in self.vocab.id_to_str.items():
-                is_valid = False
-                for exp in expected_literals:
-                    if exp.startswith(token_str):
-                        is_valid = True
-                        break
-                    elif token_str.startswith(exp) and len(token_str) > len(exp):
-                        can_use_fast_path = False
-                        break
-
-                if not can_use_fast_path:
-                    break
-
-                if is_valid:
-                    fast_masked_logits[token_id] = logits[token_id]
-
-            if can_use_fast_path:
-                return fast_masked_logits
-
-        # Pure Value Parsing (Regex) Bulk-Check
         for token_id, token_str in self.vocab.id_to_str.items():
             tentative_generation = current_generation + token_str
 

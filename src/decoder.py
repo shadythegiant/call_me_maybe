@@ -5,9 +5,7 @@ from typing import List
 from .vocab import TokenVocab
 from .schemas import FunctionDefinition
 
-# PRE-COMPILE REGEXES ONCE FOR SPEED
-# re.compile translates the regex string into a C-level state machine once,
-# rather than re-evaluating the string 750,000 times per token step.
+# Pre-compiled regexes for maximum speed
 RE_NUMBER = re.compile(r'^-?(?:0|[1-9]\d*)?(?:\.\d*)?')
 RE_STRING = re.compile(r'^"([^"\\]|\\.)*("?)')
 
@@ -55,7 +53,6 @@ class ConstraintEngine:
                     return False
 
             elif block_type == "number":
-                # Use the pre-compiled regex for a massive speedup
                 match = RE_NUMBER.match(remaining_text)
                 num_str = match.group(0) if match else ""
 
@@ -68,7 +65,6 @@ class ConstraintEngine:
             elif block_type == "string":
                 if not remaining_text.startswith('"'):
                     return False
-                # Use the pre-compiled regex
                 match = RE_STRING.match(remaining_text)
                 str_part = match.group(0) if match else ""
 
@@ -83,10 +79,29 @@ class ConstraintEngine:
     def mask_logits(
         self, logits: List[float], current_generation: str, original_prompt: str
     ) -> List[float]:
-        """Mask illegal tokens by testing them against the target templates."""
-        masked_logits = list(logits)
-        valid_templates = []
+        """Mask illegal tokens using fast-paths and template parsing."""
 
+        # SPEEDUP 1: Memory Pre-allocation
+        # Instead of copying the list and running 'if i not in vocab' 150k times,
+        # we instantly allocate an array of negative infinity.
+        masked_logits = [-math.inf] * len(logits)
+
+        base_prefix = f'{{"prompt": "{original_prompt}", "name": "'
+
+        # SPEEDUP 2: The Fast-Path
+        # If we are typing the base prompt (which is >50% of the tokens),
+        # skip all Regex templates and use ultra-fast C-level string checking.
+        if len(current_generation) < len(base_prefix):
+            expected = base_prefix[len(current_generation):]
+
+            for token_id, token_str in self.vocab.id_to_str.items():
+                if expected.startswith(token_str) or token_str.startswith(expected):
+                    # Restore the valid logit score
+                    masked_logits[token_id] = logits[token_id]
+            return masked_logits
+
+        # --- STANDARD PHASE: Schema & Parameter Enforcement ---
+        valid_templates = []
         match = re.search(r'"name":\s*"([^"]+)"', current_generation)
         if match:
             chosen_name = match.group(1)
@@ -101,22 +116,15 @@ class ConstraintEngine:
                     self._get_expected_template(func, original_prompt))
 
         if not valid_templates:
-            return [-math.inf] * len(logits)
+            return masked_logits
 
+        # The Heavy Loop (now only running for the final few parameter tokens)
         for token_id, token_str in self.vocab.id_to_str.items():
             tentative_generation = current_generation + token_str
 
-            is_valid = False
             for template in valid_templates:
                 if self._is_valid_prefix(tentative_generation, template):
-                    is_valid = True
+                    masked_logits[token_id] = logits[token_id]
                     break
-
-            if not is_valid:
-                masked_logits[token_id] = -math.inf
-
-        for i in range(len(masked_logits)):
-            if i not in self.vocab.id_to_str:
-                masked_logits[i] = -math.inf
 
         return masked_logits

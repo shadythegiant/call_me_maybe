@@ -31,7 +31,7 @@ class ConstraintEngine:
             (
                 "literal",
                 f'{{"prompt": "{original_prompt}", "name": "{func.name}", '
-                '"parameters": {{',
+                '"parameters": {',
             ))
 
         # 2. The parameters in order based on the function schema

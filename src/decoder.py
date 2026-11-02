@@ -22,12 +22,17 @@ class ConstraintEngine:
     def _get_expected_template(
         self, func: FunctionDefinition, original_prompt: str
     ) -> list[tuple[str, str]]:
-        """Breaks the exact required JSON structure into an ordered sequence."""
+        """Breaks the exact required JSON structure into
+        an ordered sequence."""
         seq = []
 
         # 1. The mandatory JSON start
         seq.append(
-            ("literal", f'{{"prompt": "{original_prompt}", "name": "{func.name}", "parameters": {{'))
+            (
+                "literal",
+                f'{{"prompt": "{original_prompt}", "name": "{func.name}", '
+                '"parameters": {{',
+            ))
 
         # 2. The parameters in order based on the function schema
         params = list(func.parameters.items())
@@ -49,7 +54,8 @@ class ConstraintEngine:
         text_idx = 0
 
         for i, (block_type, literal_val) in enumerate(template):
-            # If we've successfully verified all text, return the current block state
+            # If we've successfully verified all text
+            # , return the current block state
             if text_idx >= len(text):
                 return (i, 0)
 
@@ -86,7 +92,8 @@ class ConstraintEngine:
                 if str_part == remaining_text:
                     return (i, len(str_part))
 
-                # If the string isn't closed, but there's more text, it's invalid
+                # If the string isn't closed
+                # but there's more text, it's invalid
                 if not str_part.endswith('"') or len(str_part) == 1:
                     return None
 
@@ -98,7 +105,7 @@ class ConstraintEngine:
                 num_str = match.group(0) if match else ""
 
                 if not num_str:
-                    return None  # Branch dead: Invalid character for an integer
+                    return None
 
                 if num_str == remaining_text:
                     return (i, len(num_str))
@@ -111,31 +118,34 @@ class ConstraintEngine:
                 bool_str = match.group(0) if match else ""
 
                 if not bool_str:
-                    return None  # Invalid character for a boolean
+                    return None
 
                 if bool_str == remaining_text:
-                    return (i, len(bool_str))  # Still typing the boolean
+                    return (i, len(bool_str))
 
-                # If it's a complete 'true' or 'false', advance the cursor
                 if bool_str in ["true", "false"]:
                     text_idx += len(bool_str)
                 else:
                     return None
 
-                # If we successfully parsed the whole template and the text ran out
         if text_idx >= len(text):
             return (len(template), 0)
 
         return None
 
     def mask_logits(
-        self, logits: List[float], current_generation: str, original_prompt: str,
+        self,
+        logits: List[float],
+        current_generation: str,
+        original_prompt: str,
         single_token_test: tuple[int, str] | None = None
     ) -> bool | List[float]:
         """
-        Evaluates valid templates. 
-        If single_token_test is provided, returns a boolean indicating if that specific token is allowed.
-        Otherwise, returns a fully masked logit array for the entire vocabulary.
+        Evaluates valid templates.
+        If single_token_test is provided, returns a boolean
+        indicating if that specific token is allowed.
+        Otherwise, returns a fully masked
+        logit array for the entire vocabulary.
         """
         # --- 1. Identify Valid Templates ---
         valid_templates = []
@@ -149,7 +159,6 @@ class ConstraintEngine:
                         self._get_expected_template(func, original_prompt))
                     break
         else:
-            # We are still generating the name; all templates are valid
             for func in self.functions:
                 valid_templates.append(
                     self._get_expected_template(func, original_prompt))
@@ -157,19 +166,18 @@ class ConstraintEngine:
         if not valid_templates:
             return False if single_token_test else [-math.inf] * len(logits)
 
-        # --- 2. FAST PATH: "Sort & Check" Optimization ---
-        # Used when __main__.py evaluates one token at a time starting from the highest logit
         if single_token_test:
             token_id, token_str = single_token_test
             tentative_generation = current_generation + token_str
 
             for template in valid_templates:
-                if self._get_cursor_state(tentative_generation, template) is not None:
+                if (
+                    self._get_cursor_state(tentative_generation, template)
+                    is not None
+                ):
                     return True
             return False
 
-        # --- 3. SLOW PATH: Full Vocabulary Masking (Fallback) ---
-        # Only used if the generation loop does not pass single_token_test
         masked_logits = [-math.inf] * len(logits)
 
         for token_id, token_str in self.vocab.id_to_str.items():
@@ -177,7 +185,10 @@ class ConstraintEngine:
 
             is_valid = False
             for template in valid_templates:
-                if self._get_cursor_state(tentative_generation, template) is not None:
+                if (
+                    self._get_cursor_state(tentative_generation, template)
+                    is not None
+                ):
                     is_valid = True
                     break
 

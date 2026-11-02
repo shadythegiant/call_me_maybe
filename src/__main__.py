@@ -10,7 +10,8 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 # PYTORCH CPU THREAD OPTIMIZATION
-# Forces the model to use 4 physical cores, eliminating severe context-switching
+# Forces the model to use 4 physical cores,
+# eliminating severe context-switching
 # overhead on multi-core CPUs. This alone drastically reduces inference time.
 torch.set_num_threads(4)
 torch.set_grad_enabled(False)
@@ -29,9 +30,11 @@ def load_json_file(filepath: str, adapter: TypeAdapter) -> list:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Call Me Maybe: LLM Function Calling Engine")
-    parser.add_argument("-functions_definition", "--functions_definition", type=str,
-                        default="data/input/functions_definition.json")
+        description="Call Me Maybe: LLM Function Calling Engine"
+    )
+    parser.add_argument(
+        "-functions_definition", "--functions_definition", type=str,
+        default="data/input/functions_definition.json")
     parser.add_argument("--input", type=str,
                         default="data/input/function_calling_tests.json")
     parser.add_argument("--output", type=str,
@@ -58,16 +61,14 @@ def main() -> None:
         escaped_prompt = json.dumps(test_prompt)[1:-1]
 
         # 1. Build the semantic context
-        full_prompt = "Select a function to answer the query.\n\nAvailable functions:\n"
+        full_prompt = (
+            "Select a function to answer the query.\n\nAvailable functions:\n"
+        )
         for f in functions:
             full_prompt += f"- {f.name}: {f.description}\n"
         full_prompt += f"\nQuery: {test_prompt}\n\nResult:\n"
 
         input_ids = llm.encode(full_prompt)[0].tolist()
-
-        # 2. PRE-FILL THE DETERMINISTIC PREFIX
-        # By providing this fixed start, we instantly skip asking the LLM to
-        # generate the first ~20 tokens, saving massive CPU cycles.
         prefix = f'{{"prompt": "{escaped_prompt}", "name": "'
         generated_text = prefix
         input_ids += llm.encode(prefix)[0].tolist()
@@ -79,10 +80,6 @@ def main() -> None:
 
         for step in range(max_tokens):
             logits = llm.get_logits_from_input_ids(input_ids)
-
-            # --- THE GENIUS OPTIMIZATION: Sort & Check ---
-            # Instead of masking all 151,643 tokens, we test them one by one
-            # starting from the LLM's top choice.
             indexed_logits = list(enumerate(logits))
             indexed_logits.sort(key=lambda x: x[1], reverse=True)
 
@@ -123,7 +120,8 @@ def main() -> None:
             results.append(final_obj.model_dump())
         except ValidationError as e:
             print(
-                f"\nError: Model produced invalid output for prompt '{test_prompt}': {e}")
+                "\nError: Model produced invalid output"
+                f"for prompt '{test_prompt}': {e}")
             sys.exit(1)
 
     # Safely write the output file
@@ -140,5 +138,6 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\nExecution interrupted by user (Ctrl+C). Exiting gracefully...")
+        print("\n\nExecution interrupted by user"
+              " (Ctrl+C). Exiting gracefully...")
         sys.exit(130)

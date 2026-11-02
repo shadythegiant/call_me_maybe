@@ -18,7 +18,8 @@ class TokenVocab(BaseModel):
 
         id_to_str: dict[int, str] = {}
         for token_str, token_id in raw_vocab.items():
-            # In BPE, 'Ġ' represents a leading space and 'Ċ' represents a newline
+            # In BPE, 'Ġ' represents a leading space and 'Ċ'
+            # represents a newline
             clean_token = token_str.replace("Ġ", " ").replace("Ċ", "\n")
             id_to_str[token_id] = clean_token
 

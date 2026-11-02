@@ -10,6 +10,8 @@ from .schemas import FunctionDefinition
 # preventing massive overhead during the token evaluation loop.
 RE_NUMBER = re.compile(r'^-?(?:0|[1-9]\d*)?(?:\.\d*)?')
 RE_STRING = re.compile(r'^"([^"\\]|\\.)*("?)')
+RE_INTEGER = re.compile(r'^-?(?:0|[1-9]\d*)?')
+RE_BOOLEAN = re.compile(r'^(true|false|t|tr|tru|f|fa|fal|fals)')
 
 
 class ConstraintEngine:
@@ -91,7 +93,36 @@ class ConstraintEngine:
                 # String finished, advance the cursor past it
                 text_idx += len(str_part)
 
-        # If we successfully parsed the whole template and the text ran out
+            elif block_type == "integer":
+                match = RE_INTEGER.match(remaining_text)
+                num_str = match.group(0) if match else ""
+
+                if not num_str:
+                    return None  # Branch dead: Invalid character for an integer
+
+                if num_str == remaining_text:
+                    return (i, len(num_str))
+
+                # Integer finished, advance the cursor past it
+                text_idx += len(num_str)
+
+            elif block_type == "boolean":
+                match = RE_BOOLEAN.match(remaining_text)
+                bool_str = match.group(0) if match else ""
+
+                if not bool_str:
+                    return None  # Invalid character for a boolean
+
+                if bool_str == remaining_text:
+                    return (i, len(bool_str))  # Still typing the boolean
+
+                # If it's a complete 'true' or 'false', advance the cursor
+                if bool_str in ["true", "false"]:
+                    text_idx += len(bool_str)
+                else:
+                    return None
+
+                # If we successfully parsed the whole template and the text ran out
         if text_idx >= len(text):
             return (len(template), 0)
 

@@ -1,23 +1,16 @@
 from .decoder import ConstraintEngine
 from .vocab import TokenVocab
 from .schemas import FunctionDefinition, PromptItem, FunctionCallOutput
-from llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model  # type: ignore
 import argparse
 import json
 import sys
-import torch
 from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
-
-# PYTORCH CPU THREAD OPTIMIZATION
-# Forces the model to use 4 physical cores,
-# eliminating severe context-switching
-# overhead on multi-core CPUs. This alone drastically reduces inference time.
-torch.set_num_threads(4)
-torch.set_grad_enabled(False)
+from typing import Any
 
 
-def load_json_file(filepath: str, adapter: TypeAdapter) -> list:
+def load_json_file(filepath: str, adapter: TypeAdapter) -> Any:
     """Safely load and validate a JSON file against a Pydantic TypeAdapter."""
     try:
         with open(filepath, "r", encoding="utf-8") as f:

@@ -1,6 +1,6 @@
 import math
 import re
-from typing import List
+from typing import List, Tuple
 
 from .vocab import TokenVocab
 from .schemas import FunctionDefinition
@@ -48,7 +48,9 @@ class ConstraintEngine:
         seq.append(("literal", "}}"))
         return seq
 
-    def _get_cursor_state(self, text: str, template: list[tuple[str, str]]):
+    def _get_cursor_state(
+        self, text: str, template: list[tuple[str, str]]
+    ) -> Tuple[int, int] | None:
         """Returns the exact state (block_index, char_index)
         of the generated text."""
         text_idx = 0

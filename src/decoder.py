@@ -42,7 +42,8 @@ class ConstraintEngine:
         return seq
 
     def _get_cursor_state(self, text: str, template: list[tuple[str, str]]):
-        """Returns the exact state (block_index, char_index) of the generated text."""
+        """Returns the exact state (block_index, char_index)
+        of the generated text."""
         text_idx = 0
 
         for i, (block_type, literal_val) in enumerate(template):

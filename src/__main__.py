@@ -99,9 +99,9 @@ def main() -> None:
                     best_token_str = token_str
                     break  # Stop immediately! We found the best valid token.
 
-                if best_token_id is None:
-                    print("No Valid token sys is exiting")
-                    break
+            if best_token_id is None:
+                print("No Valid token sys is exiting")
+                break
 
             generated_text += best_token_str
             input_ids.append(best_token_id)

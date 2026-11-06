@@ -39,6 +39,13 @@ def main() -> None:
         args.functions_definition, TypeAdapter(list[FunctionDefinition]))
     prompts = load_json_file(args.input, TypeAdapter(list[PromptItem]))
 
+    if not functions:
+        print("No functions provided")
+        sys.exit(0)
+    if not prompts:
+        print("No prompts provided")
+        sys.exit(0)
+
     print("Initializing LLM...")
     llm = Small_LLM_Model(model_name="Qwen/Qwen3-0.6B")
 
@@ -55,7 +62,9 @@ def main() -> None:
 
         # 1. Build the semantic context
         full_prompt = (
-            "Select a function to answer the query.\n\nAvailable functions:\n"
+            "Select a function to answer the query. "
+            "If no function is appropriate, select 'none'"
+            ".\n\nAvailable functions:\n"
         )
         for f in functions:
             full_prompt += f"- {f.name}: {f.description}\n"
@@ -97,7 +106,7 @@ def main() -> None:
                 if test_mask:
                     best_token_id = token_id
                     best_token_str = token_str
-                    break  # Stop immediately! We found the best valid token.
+                    break
 
             if best_token_id is None:
                 print("No Valid token sys is exiting")

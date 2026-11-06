@@ -80,8 +80,8 @@
     "name": "fn_substitute_string_with_regex",
     "parameters": {
       "source_string": "The cat sat on the mat with another cat",
-      "regex": "cat.*cat",
-      "replacement": "dog."
+      "regex": "cat",
+      "replacement": "dog"
     }
   }
 ]

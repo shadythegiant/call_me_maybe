@@ -120,10 +120,6 @@ def main() -> None:
 
         print(" -> Done.")
 
-        if not generated_text.endswith("}}"):
-            print(f"\nError: Cannot find an appropriate "
-                  f"function or valid parameter for prompt: '{test_prompt}'.")
-
         try:
             # Validate output and append to our results array
             final_obj = FunctionCallOutput.model_validate_json(generated_text)

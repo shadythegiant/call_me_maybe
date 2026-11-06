@@ -123,16 +123,15 @@ def main() -> None:
         if not generated_text.endswith("}}"):
             print(f"\nError: Cannot find an appropriate "
                   f"function or valid parameter for prompt: '{test_prompt}'.")
-            continue
 
         try:
             # Validate output and append to our results array
             final_obj = FunctionCallOutput.model_validate_json(generated_text)
             results.append(final_obj.model_dump())
-        except ValidationError as e:
+        except ValidationError:
             print(
                 "\nError: Model produced invalid output"
-                f"for prompt '{test_prompt}': {e}")
+                f"for prompt '{test_prompt}'")
             sys.exit(1)
 
     # Safely write the output file
@@ -141,12 +140,8 @@ def main() -> None:
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
-    if len(results) > 0:
-        print(
-            "\nSuccess! All "
-            f"{len(results)} results written to '{args.output}'.")
-    else:
-        print("Error No resultes exported")
+
+    print(f"\nSuccess! All {len(results)} results written to '{args.output}'.")
 
 
 if __name__ == "__main__":

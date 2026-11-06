@@ -141,8 +141,12 @@ def main() -> None:
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
-
-    print(f"\nSuccess! All {len(results)} results written to '{args.output}'.")
+    if len(results) > 0:
+        print(
+            "\nSuccess! All "
+            f"{len(results)} results written to '{args.output}'.")
+    else:
+        print("Error No resultes exported")
 
 
 if __name__ == "__main__":
